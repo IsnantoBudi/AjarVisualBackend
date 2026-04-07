@@ -1,0 +1,41 @@
+# ── Binary Build Output ────────────────────────────────────────
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+/backend
+ajarvisual
+ajarvisual-backend
+
+# ── Test & Coverage ────────────────────────────────────────────
+*.test
+*.out
+coverage.out
+coverage.html
+
+# ── Environment Variables (RAHASIA - jangan di-commit!) ────────
+.env
+.env.local
+.env.production
+.env.development
+*.env
+
+# ── Go Dependency Cache ────────────────────────────────────────
+vendor/
+
+# ── OS Files ───────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── IDE / Editor ───────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ── Temporary & Log Files ──────────────────────────────────────
+*.log
+tmp/
+temp/
