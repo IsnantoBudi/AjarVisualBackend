@@ -30,8 +30,10 @@ func main() {
 	frontendURL := os.Getenv("FRONTEND_URL")
 	if frontendURL != "" {
 		// Pisahkan berdasarkan koma jika ada beberapa URL
+		// Trim trailing slash karena browser Origin header tidak punya trailing slash
 		for _, url := range strings.Split(frontendURL, ",") {
 			url = strings.TrimSpace(url)
+			url = strings.TrimRight(url, "/")
 			if url != "" {
 				allowedOrigins = append(allowedOrigins, url)
 			}
