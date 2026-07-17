@@ -16,6 +16,7 @@ Kelas       int    `json:"kelas" binding:"required,min=1,max=6"`
 JumlahSoal  int    `json:"jumlah_soal" binding:"required,min=1,max=10"`
 TipeSoal    string `json:"tipe_soal"`
 TanpaGambar bool   `json:"tanpa_gambar"`
+Model       string `json:"model"`
 }
 
 func GenerateWorksheet(c *gin.Context) {
@@ -35,6 +36,7 @@ cfg := services.GenerateConfig{
 	JumlahSoal:  req.JumlahSoal,
 	TipeSoal:    req.TipeSoal,
 	TanpaGambar: req.TanpaGambar,
+	Model:       req.Model,
 }
 
 soalList, err := services.GenerateSoal(cfg)
@@ -112,6 +114,7 @@ func AddSoalToWorksheet(c *gin.Context) {
 		JumlahSoal:  req.JumlahSoal,
 		TipeSoal:    req.TipeSoal,
 		TanpaGambar: req.TanpaGambar,
+		Model:       req.Model,
 	}
 
 	newSoal, err := services.GenerateSoal(cfg)
@@ -162,6 +165,9 @@ func ProxyImage(c *gin.Context) {
 	if contentType == "" {
 		contentType = "image/jpeg"
 	}
+
+	// Set Cache-Control header (1 year, immutable)
+	c.Header("Cache-Control", "public, max-age=31536000, immutable")
 
 	c.Data(http.StatusOK, contentType, imageData)
 }

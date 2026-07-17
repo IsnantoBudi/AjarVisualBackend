@@ -47,7 +47,7 @@ func ConnectDB() {
 		log.Fatal("Failed to connect to TiDB: ", err)
 	}
 
-	if err := db.AutoMigrate(&models.Worksheet{}); err != nil {
+	if err := db.AutoMigrate(&models.Worksheet{}, &models.CachedImage{}); err != nil {
 		log.Fatal("Failed to auto migrate: ", err)
 	}
 

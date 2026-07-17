@@ -2,6 +2,8 @@ package services
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,7 +11,11 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sync"
 	"time"
+
+	"ajarvisual-backend/config"
+	"ajarvisual-backend/models"
 )
 
 // HF_MODEL is the model ID.
@@ -71,7 +77,7 @@ func QueryHuggingFace(prompt string) ([]byte, string, error) {
 // QueryPollinationsImage fetches an image from Pollinations.ai
 func QueryPollinationsImage(prompt string) ([]byte, string, error) {
 	encoded := url.QueryEscape(prompt + ", cartoon style, educational, kids illustration, vibrant, cute, white background")
-	apiURL := fmt.Sprintf("https://image.pollinations.ai/prompt/%s?width=512&height=512&nologo=true&seed=%d", encoded, time.Now().UnixMilli()%10000)
+	apiURL := fmt.Sprintf("https://image.pollinations.ai/prompt/%s?width=100&height=100&nologo=true&seed=%d", encoded, time.Now().UnixMilli()%10000)
 
 	client := &http.Client{Timeout: 60 * time.Second}
 	resp, err := client.Get(apiURL)
@@ -97,22 +103,77 @@ func QueryPollinationsImage(prompt string) ([]byte, string, error) {
 	return imgData, contentType, nil
 }
 
-// GenerateImage tries Pollinations first (reliable, free), falls back to HuggingFace
+var (
+	// imageMutex memastikan generator gambar berjalan secara serial (antrean satu per satu)
+	// untuk menghindari status 429 (Too Many Requests) dari API eksternal.
+	imageMutex sync.Mutex
+)
+
+// GenerateImage checks TiDB cache first, then generates and saves if not found.
 func GenerateImage(prompt string) ([]byte, string, error) {
-	// Try Pollinations first (free, no quota issues)
-	imgData, ct, err := QueryPollinationsImage(prompt)
-	if err == nil {
-		log.Printf("[image] Pollinations OK for: %s", prompt[:min(len(prompt), 60)])
-		return imgData, ct, nil
+	// 1. Hitung SHA-256 hash dari prompt
+	hashBytes := sha256.Sum256([]byte(prompt))
+	promptHash := hex.EncodeToString(hashBytes[:])
+
+	// 2. Cari di database cache menggunakan config.DB (CONCURRENT - tanpa Lock)
+	var cached models.CachedImage
+	if err := config.DB.Where("prompt_hash = ?", promptHash).First(&cached).Error; err == nil {
+		log.Printf("[image cache] HIT for: %s (hash: %s)", prompt[:min(len(prompt), 40)], promptHash)
+		return cached.ImageData, cached.ContentType, nil
 	}
 
-	log.Printf("[image] Pollinations failed (%v), trying HuggingFace...", err)
+	log.Printf("[image cache] MISS for: %s. Menunggu giliran generator serial...", prompt[:min(len(prompt), 40)])
 
-	// Fallback: HuggingFace
-	imgData, ct, err = QueryHuggingFace(prompt)
+	// 3. Masuk antrean serial (hanya satu generator yang berjalan pada satu waktu)
+	imageMutex.Lock()
+	defer imageMutex.Unlock()
+
+	// 3a. Periksa kembali cache setelah mendapatkan lock (Double-Check Locking Pattern)
+	// Hal ini untuk menghindari duplikasi request jika request identik sedang mengantre.
+	if err := config.DB.Where("prompt_hash = ?", promptHash).First(&cached).Error; err == nil {
+		log.Printf("[image cache] HIT (double-check) for: %s (hash: %s)", prompt[:min(len(prompt), 40)], promptHash)
+		return cached.ImageData, cached.ContentType, nil
+	}
+
+	// Jeda singkat (misal 500ms) antar pemanggilan API serial agar API luar tidak merasa dibombardir
+	time.Sleep(500 * time.Millisecond)
+
+	var imgData []byte
+	var ct string
+	var err error
+
+	// Coba Pollinations.ai dulu
+	imgData, ct, err = QueryPollinationsImage(prompt)
+	if err == nil {
+		log.Printf("[image] Pollinations OK for: %s", prompt[:min(len(prompt), 60)])
+	} else {
+		log.Printf("[image] Pollinations failed (%v), trying HuggingFace...", err)
+		// Fallback ke HuggingFace
+		imgData, ct, err = QueryHuggingFace(prompt)
+	}
+
 	if err != nil {
 		return nil, "", fmt.Errorf("all image providers failed: %w", err)
 	}
+
+	if ct == "" {
+		ct = "image/jpeg"
+	}
+
+	// 4. Simpan ke database cache untuk request berikutnya
+	newCached := models.CachedImage{
+		PromptHash:  promptHash,
+		Prompt:      prompt,
+		ImageData:   imgData,
+		ContentType: ct,
+	}
+
+	if dbErr := config.DB.Create(&newCached).Error; dbErr != nil {
+		log.Printf("[image cache] Warning: failed to save cache to database: %v", dbErr)
+	} else {
+		log.Printf("[image cache] Saved to database for hash: %s", promptHash)
+	}
+
 	return imgData, ct, nil
 }
 
