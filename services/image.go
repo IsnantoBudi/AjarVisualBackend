@@ -3,11 +3,12 @@ package services
 import (
 	"fmt"
 	"net/url"
-	"os"
+
+	"ajarvisual-backend/config"
 )
 
 func GenerateImageURL(prompt string) string {
-	backendURL := os.Getenv("BACKEND_URL")
+	backendURL := config.Getenv("BACKEND_URL")
 	if backendURL == "" {
 		backendURL = "http://localhost:8080"
 	}

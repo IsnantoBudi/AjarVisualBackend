@@ -10,7 +10,6 @@ import (
 	"log"
 	"net/http"
 	"net/url"
-	"os"
 	"sync"
 	"time"
 
@@ -23,7 +22,7 @@ const HF_MODEL = "black-forest-labs/FLUX.1-schnell"
 
 // QueryHuggingFace calls the HuggingFace Inference API
 func QueryHuggingFace(prompt string) ([]byte, string, error) {
-	hfToken := os.Getenv("HF_TOKEN")
+	hfToken := config.Getenv("HF_TOKEN")
 	if hfToken == "" {
 		return nil, "", fmt.Errorf("HF_TOKEN not found in environment")
 	}
@@ -186,7 +185,7 @@ func min(a, b int) int {
 
 // GenerateImageURLFromOs returns the backend proxy URL for the given prompt
 func GenerateImageURLFromOs(prompt string) string {
-	backendURL := os.Getenv("BACKEND_URL")
+	backendURL := config.Getenv("BACKEND_URL")
 	if backendURL == "" {
 		backendURL = "http://localhost:8080"
 	}

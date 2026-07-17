@@ -7,10 +7,10 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
+	"ajarvisual-backend/config"
 	"ajarvisual-backend/models"
 )
 
@@ -54,14 +54,14 @@ type OllamaResponse struct {
 }
 
 func GenerateSoal(cfg GenerateConfig) ([]models.Soal, error) {
-	apiKey := os.Getenv("OLLAMA_CLOUD_API")
+	apiKey := config.Getenv("OLLAMA_CLOUD_API")
 	if apiKey == "" {
 		return nil, fmt.Errorf("OLLAMA_CLOUD_API not set in environment")
 	}
 
 	modelName := cfg.Model
 	if modelName == "" {
-		modelName = os.Getenv("OLLAMA_MODEL")
+		modelName = config.Getenv("OLLAMA_MODEL")
 		if modelName == "" {
 			modelName = "gemma4" // default fallback
 		}
@@ -184,7 +184,7 @@ Pastikan:
 		return nil, fmt.Errorf("failed to marshal ollama request: %w", err)
 	}
 
-	apiURL := os.Getenv("OLLAMA_CLOUD_URL")
+	apiURL := config.Getenv("OLLAMA_CLOUD_URL")
 	if apiURL == "" {
 		apiURL = "https://ollama.com/api/generate"
 	}

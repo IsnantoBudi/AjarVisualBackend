@@ -3,7 +3,6 @@ package main
 import (
 	"log"
 	"net/http"
-	"os"
 	"strings"
 
 	"ajarvisual-backend/config"
@@ -46,7 +45,7 @@ func corsMiddleware(next http.Handler) http.Handler {
 			"http://localhost:3002": true,
 		}
 
-		frontendURL := os.Getenv("FRONTEND_URL")
+		frontendURL := config.Getenv("FRONTEND_URL")
 		if frontendURL != "" {
 			for _, url := range strings.Split(frontendURL, ",") {
 				url = strings.TrimSpace(url)

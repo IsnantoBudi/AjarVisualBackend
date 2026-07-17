@@ -16,6 +16,10 @@ import (
 
 var DB *sql.DB
 
+func Getenv(key string) string {
+	return os.Getenv(key)
+}
+
 func ConnectDB() {
 	host := os.Getenv("TIDB_HOST")
 	port := os.Getenv("TIDB_PORT")

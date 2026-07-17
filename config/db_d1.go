@@ -7,10 +7,15 @@ import (
 	"database/sql"
 	"log"
 
+	"github.com/syumai/workers/cloudflare"
 	"github.com/syumai/workers/cloudflare/d1"
 )
 
 var DB *sql.DB
+
+func Getenv(key string) string {
+	return cloudflare.Getenv(key)
+}
 
 func ConnectDB() {
 	connector, err := d1.OpenConnector("DB")
