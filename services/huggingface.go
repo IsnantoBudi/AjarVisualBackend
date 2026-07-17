@@ -117,7 +117,9 @@ func GenerateImage(prompt string) ([]byte, string, error) {
 
 	// 2. Cari di database cache menggunakan config.DB (CONCURRENT - tanpa Lock)
 	var cached models.CachedImage
-	if err := config.DB.Where("prompt_hash = ?", promptHash).First(&cached).Error; err == nil {
+	err := config.DB.QueryRow("SELECT prompt_hash, prompt, image_data, content_type, created_at FROM cached_images WHERE prompt_hash = ?", promptHash).
+		Scan(&cached.PromptHash, &cached.Prompt, &cached.ImageData, &cached.ContentType, &cached.CreatedAt)
+	if err == nil {
 		log.Printf("[image cache] HIT for: %s (hash: %s)", prompt[:min(len(prompt), 40)], promptHash)
 		return cached.ImageData, cached.ContentType, nil
 	}
@@ -130,7 +132,9 @@ func GenerateImage(prompt string) ([]byte, string, error) {
 
 	// 3a. Periksa kembali cache setelah mendapatkan lock (Double-Check Locking Pattern)
 	// Hal ini untuk menghindari duplikasi request jika request identik sedang mengantre.
-	if err := config.DB.Where("prompt_hash = ?", promptHash).First(&cached).Error; err == nil {
+	err = config.DB.QueryRow("SELECT prompt_hash, prompt, image_data, content_type, created_at FROM cached_images WHERE prompt_hash = ?", promptHash).
+		Scan(&cached.PromptHash, &cached.Prompt, &cached.ImageData, &cached.ContentType, &cached.CreatedAt)
+	if err == nil {
 		log.Printf("[image cache] HIT (double-check) for: %s (hash: %s)", prompt[:min(len(prompt), 40)], promptHash)
 		return cached.ImageData, cached.ContentType, nil
 	}
@@ -140,7 +144,6 @@ func GenerateImage(prompt string) ([]byte, string, error) {
 
 	var imgData []byte
 	var ct string
-	var err error
 
 	// Coba Pollinations.ai dulu
 	imgData, ct, err = QueryPollinationsImage(prompt)
@@ -161,14 +164,11 @@ func GenerateImage(prompt string) ([]byte, string, error) {
 	}
 
 	// 4. Simpan ke database cache untuk request berikutnya
-	newCached := models.CachedImage{
-		PromptHash:  promptHash,
-		Prompt:      prompt,
-		ImageData:   imgData,
-		ContentType: ct,
-	}
-
-	if dbErr := config.DB.Create(&newCached).Error; dbErr != nil {
+	_, dbErr := config.DB.Exec(
+		"INSERT INTO cached_images (prompt_hash, prompt, image_data, content_type, created_at) VALUES (?, ?, ?, ?, NOW())",
+		promptHash, prompt, imgData, ct,
+	)
+	if dbErr != nil {
 		log.Printf("[image cache] Warning: failed to save cache to database: %v", dbErr)
 	} else {
 		log.Printf("[image cache] Saved to database for hash: %s", promptHash)

@@ -39,3 +39,4 @@ desktop.ini
 *.log
 tmp/
 temp/
+*.wasm

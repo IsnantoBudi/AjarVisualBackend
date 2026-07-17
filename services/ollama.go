@@ -1,17 +1,17 @@
 package services
 
 import (
-	"context"
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"ajarvisual-backend/models"
-
-	"github.com/google/generative-ai-go/genai"
-	"google.golang.org/api/option"
 )
 
 type GenerateConfig struct {
@@ -20,10 +20,10 @@ type GenerateConfig struct {
 	JumlahSoal  int    `json:"jumlah_soal"`
 	TipeSoal    string `json:"tipe_soal"`
 	TanpaGambar bool   `json:"tanpa_gambar"`
+	Model       string `json:"model"`
 }
 
-// geminiMatchingPair is a temporary struct for parsing the Gemini raw output
-type geminiMatchingPair struct {
+type ollamaMatchingPair struct {
 	Kiri         string `json:"kiri"`
 	Kanan        string `json:"kanan"`
 	KiriIsImage  bool   `json:"kiri_is_image"`
@@ -32,35 +32,45 @@ type geminiMatchingPair struct {
 	KananPrompt  string `json:"kanan_prompt,omitempty"`
 }
 
-// geminiSoal is temporary for raw Gemini JSON parsing
-type geminiSoal struct {
+type ollamaSoal struct {
 	Pertanyaan   string               `json:"pertanyaan"`
 	JawabanBenar string               `json:"jawaban_benar,omitempty"`
 	Opsi         []string             `json:"opsi,omitempty"`
-	PasanganItem []geminiMatchingPair `json:"pasangan_item,omitempty"`
+	PasanganItem []ollamaMatchingPair `json:"pasangan_item,omitempty"`
 	TipeSoal     string               `json:"tipe_soal"`
 	TanpaGambar  bool                 `json:"tanpa_gambar"`
 	ImagePrompt  string               `json:"image_prompt,omitempty"`
 }
 
+type OllamaRequest struct {
+	Model  string `json:"model"`
+	Prompt string `json:"prompt"`
+	Format string `json:"format,omitempty"`
+	Stream bool   `json:"stream"`
+}
+
+type OllamaResponse struct {
+	Response string `json:"response"`
+}
+
 func GenerateSoal(cfg GenerateConfig) ([]models.Soal, error) {
-	ctx := context.Background()
-	apiKey := os.Getenv("GEMINI_API_KEY")
-
-	client, err := genai.NewClient(ctx, option.WithAPIKey(apiKey))
-	if err != nil {
-		log.Println("Gemini client error:", err)
-		return nil, err
+	apiKey := os.Getenv("OLLAMA_CLOUD_API")
+	if apiKey == "" {
+		return nil, fmt.Errorf("OLLAMA_CLOUD_API not set in environment")
 	}
-	defer client.Close()
 
-	model := client.GenerativeModel("gemini-2.5-flash")
-	model.SetTemperature(0.8)
+	modelName := cfg.Model
+	if modelName == "" {
+		modelName = os.Getenv("OLLAMA_MODEL")
+		if modelName == "" {
+			modelName = "gemma4" // default fallback
+		}
+	}
 
+	// Prepare the prompt formatting
 	var formatJson string
 	if cfg.TipeSoal == "mencocokkan" {
 		if cfg.TanpaGambar {
-			// Text-only matching
 			formatJson = `[
   {
     "pertanyaan": "Instruksi soal mencocokkan terkait topik ini",
@@ -77,7 +87,6 @@ func GenerateSoal(cfg GenerateConfig) ([]models.Soal, error) {
   }
 ]`
 		} else {
-			// Illustration matching: left side = text/word, right side = image illustration
 			formatJson = `[
   {
     "pertanyaan": "Cocokkan nama benda atau kata di sebelah kiri dengan gambarnya di sebelah kanan!",
@@ -148,7 +157,7 @@ func GenerateSoal(cfg GenerateConfig) ([]models.Soal, error) {
 	prompt := fmt.Sprintf(`Kamu adalah guru ahli untuk anak SD kelas %d di Indonesia.
 %s tentang topik: "%s".
 
-PENTING: Balas HANYA dengan JSON array valid, tanpa markdown, tanpa penjelasan tambahan.
+PENTING: Balas HANYA dengan JSON array valid. Format response harus berupa JSON array of objects.
 
 Format setiap soal seperti ini:
 %s
@@ -160,36 +169,68 @@ Pastikan:
 - Bila isian_singkat, buat array opsi MENJADI KOSONG []
 - Bila mencocokkan, pasangan kiri dan kanan harus tepat dan bersesuaian.
 %s
-- Hanya output JSON, tidak ada teks lain`, cfg.Kelas, jumlahSoalPrompt, cfg.Topik, formatJson, cfg.Kelas, instruksiImage)
+- Hanya output JSON array, tidak ada teks lain`, cfg.Kelas, jumlahSoalPrompt, cfg.Topik, formatJson, cfg.Kelas, instruksiImage)
 
-	resp, err := model.GenerateContent(ctx, genai.Text(prompt))
+	// Call Ollama Cloud API
+	ollamaReq := OllamaRequest{
+		Model:  modelName,
+		Prompt: prompt,
+		Format: "json",
+		Stream: false,
+	}
+
+	jsonData, err := json.Marshal(ollamaReq)
 	if err != nil {
-		return nil, fmt.Errorf("gemini error: %w", err)
+		return nil, fmt.Errorf("failed to marshal ollama request: %w", err)
 	}
 
-	if len(resp.Candidates) == 0 || len(resp.Candidates[0].Content.Parts) == 0 {
-		return nil, fmt.Errorf("no response from Gemini")
+	apiURL := os.Getenv("OLLAMA_CLOUD_URL")
+	if apiURL == "" {
+		apiURL = "https://ollama.com/api/generate"
 	}
 
-	rawText := fmt.Sprintf("%v", resp.Candidates[0].Content.Parts[0])
+	req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create http request: %w", err)
+	}
 
-	// Clean the response - remove markdown code blocks if present
-	rawText = strings.TrimSpace(rawText)
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 90 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("ollama cloud request error: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		log.Printf("[Ollama] Error %d: %s", resp.StatusCode, string(bodyBytes))
+		return nil, fmt.Errorf("ollama cloud api error: status %d", resp.StatusCode)
+	}
+
+	var ollamaResp OllamaResponse
+	if err := json.NewDecoder(resp.Body).Decode(&ollamaResp); err != nil {
+		return nil, fmt.Errorf("failed to decode ollama response: %w", err)
+	}
+
+	rawText := strings.TrimSpace(ollamaResp.Response)
 	rawText = strings.TrimPrefix(rawText, "```json")
 	rawText = strings.TrimPrefix(rawText, "```")
 	rawText = strings.TrimSuffix(rawText, "```")
 	rawText = strings.TrimSpace(rawText)
 
-	// Parse into our geminiSoal intermediate structs
-	var rawList []geminiSoal
+	// Parse into our raw list
+	var rawList []ollamaSoal
 	err = json.Unmarshal([]byte(rawText), &rawList)
 	if err != nil {
 		log.Println("JSON parse error:", err)
 		log.Println("Raw response:", rawText)
-		return nil, fmt.Errorf("failed to parse Gemini response: %w", err)
+		return nil, fmt.Errorf("failed to parse Ollama response: %w", err)
 	}
 
-	// Convert geminiSoal -> models.Soal and generate images
+	// Convert rawList -> models.Soal and generate images
 	soalList := make([]models.Soal, 0, len(rawList))
 	for _, raw := range rawList {
 		soal := models.Soal{

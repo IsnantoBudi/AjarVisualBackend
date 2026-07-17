@@ -46,9 +46,9 @@ func (s *SoalList) Scan(value interface{}) error {
 }
 
 type Worksheet struct {
-	ID           uint      `json:"id" gorm:"primaryKey;autoIncrement"`
-	JudulMateri  string    `json:"judul_materi" gorm:"type:varchar(255);not null"`
-	TingkatKelas int       `json:"tingkat_kelas" gorm:"default:1"`
-	DataSoal     SoalList  `json:"data_soal" gorm:"type:json;not null"`
+	ID           uint      `json:"id"`
+	JudulMateri  string    `json:"judul_materi"`
+	TingkatKelas int       `json:"tingkat_kelas"`
+	DataSoal     SoalList  `json:"data_soal"`
 	CreatedAt    time.Time `json:"created_at"`
 }

@@ -2,75 +2,75 @@ package main
 
 import (
 	"log"
+	"net/http"
 	"os"
 	"strings"
 
 	"ajarvisual-backend/config"
 	"ajarvisual-backend/handlers"
 
-	"github.com/gin-contrib/cors"
-	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 )
 
-func main() {
+func setupApp() http.Handler {
 	if err := godotenv.Load(); err != nil {
 		log.Println("Warning: .env file not found, using system env")
 	}
 
 	config.ConnectDB()
 
-	r := gin.Default()
+	mux := http.NewServeMux()
 
-	// CORS - bangun daftar origin yang diizinkan
-	// FRONTEND_URL bisa berisi satu URL atau beberapa URL dipisah koma
-	// Contoh: https://ajar-visual.vercel.app,http://localhost:3000
-	allowedOrigins := []string{"http://localhost:3000"}
+	// Daftarkan route menggunakan standard http.ServeMux (Go 1.22+ pattern)
+	mux.HandleFunc("POST /api/generate", handlers.GenerateWorksheet)
+	mux.HandleFunc("GET /api/history", handlers.GetAllHistory)
+	mux.HandleFunc("GET /api/history/{id}", handlers.GetWorksheetByID)
+	mux.HandleFunc("DELETE /api/history/{id}", handlers.DeleteWorksheet)
+	mux.HandleFunc("POST /api/history/{id}/add-soal", handlers.AddSoalToWorksheet)
+	mux.HandleFunc("POST /api/regenerate-image", handlers.RegenerateImage)
+	mux.HandleFunc("GET /api/image-proxy", handlers.ProxyImage)
 
-	frontendURL := os.Getenv("FRONTEND_URL")
-	if frontendURL != "" {
-		// Pisahkan berdasarkan koma jika ada beberapa URL
-		// Trim trailing slash karena browser Origin header tidak punya trailing slash
-		for _, url := range strings.Split(frontendURL, ",") {
-			url = strings.TrimSpace(url)
-			url = strings.TrimRight(url, "/")
-			if url != "" {
-				allowedOrigins = append(allowedOrigins, url)
+	// Health check
+	mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"status":"ok","message":"AjarVisual API is running"}`))
+	})
+
+	return corsMiddleware(mux)
+}
+
+func corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		allowedOrigins := map[string]bool{
+			"http://localhost:3002": true,
+		}
+
+		frontendURL := os.Getenv("FRONTEND_URL")
+		if frontendURL != "" {
+			for _, url := range strings.Split(frontendURL, ",") {
+				url = strings.TrimSpace(url)
+				url = strings.TrimRight(url, "/")
+				if url != "" {
+					allowedOrigins[url] = true
+				}
 			}
 		}
-	}
 
-	log.Printf("CORS: Mengizinkan origin: %v", allowedOrigins)
+		origin := r.Header.Get("Origin")
+		if allowedOrigins[origin] {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+		}
 
-	r.Use(cors.New(cors.Config{
-		AllowOrigins:     allowedOrigins,
-		AllowMethods:     []string{"GET", "POST", "DELETE", "OPTIONS"},
-		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization"},
-		ExposeHeaders:    []string{"Content-Length"},
-		AllowCredentials: true,
-	}))
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Origin, Content-Type, Accept, Authorization")
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
 
-	api := r.Group("/api")
-	{
-		api.POST("/generate", handlers.GenerateWorksheet)
-		api.GET("/history", handlers.GetAllHistory)
-		api.GET("/history/:id", handlers.GetWorksheetByID)
-		api.DELETE("/history/:id", handlers.DeleteWorksheet)
-		api.POST("/history/:id/add-soal", handlers.AddSoalToWorksheet)
-		api.POST("/regenerate-image", handlers.RegenerateImage)
-		api.GET("/image-proxy", handlers.ProxyImage)
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 
-		// Health check
-		api.GET("/health", func(c *gin.Context) {
-			c.JSON(200, gin.H{"status": "ok", "message": "AjarVisual API is running"})
-		})
-	}
-
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
-	}
-
-	log.Printf("AjarVisual API running on port %s", port)
-	r.Run(":" + port)
+		next.ServeHTTP(w, r)
+	})
 }
