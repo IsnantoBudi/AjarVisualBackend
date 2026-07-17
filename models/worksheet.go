@@ -46,9 +46,9 @@ func (s *SoalList) Scan(value interface{}) error {
 }
 
 type Worksheet struct {
-	ID           uint      `json:"id"`
-	JudulMateri  string    `json:"judul_materi"`
-	TingkatKelas int       `json:"tingkat_kelas"`
-	DataSoal     SoalList  `json:"data_soal"`
-	CreatedAt    time.Time `json:"created_at"`
+	ID           uint       `json:"id"`
+	JudulMateri  string     `json:"judul_materi"`
+	TingkatKelas int        `json:"tingkat_kelas"`
+	DataSoal     SoalList   `json:"data_soal"`
+	CreatedAt    *time.Time `json:"created_at"`
 }
