@@ -57,7 +57,21 @@ func corsMiddleware(next http.Handler) http.Handler {
 		}
 
 		origin := r.Header.Get("Origin")
-		if allowedOrigins[origin] {
+		isAllowed := false
+
+		if origin != "" {
+			// Dynamic checks: vercel.app domains or localhost
+			if strings.HasSuffix(origin, ".vercel.app") || 
+			   strings.Contains(origin, "localhost:") || 
+			   strings.Contains(origin, "127.0.0.1:") ||
+			   origin == "https://ajar-visual.vercel.app" {
+				isAllowed = true
+			} else if allowedOrigins[origin] {
+				isAllowed = true
+			}
+		}
+
+		if isAllowed {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 		}
 
