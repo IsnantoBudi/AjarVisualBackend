@@ -1,12 +1,62 @@
-import './wasm_exec.js';
-import wasm from './main.wasm';
+import "./wasm_exec.js";
+import { createRuntimeContext, loadModule } from "./runtime.mjs";
 
-const go = new Go();
-const instance = new WebAssembly.Instance(wasm, go.importObject);
-go.run(instance);
+let mod;
+
+globalThis.tryCatch = (fn) => {
+  try {
+    return {
+      result: fn(),
+    };
+  } catch (e) {
+    return {
+      error: e,
+    };
+  }
+};
+
+async function run(ctx) {
+  if (mod === undefined) {
+    mod = await loadModule();
+  }
+  const go = new Go();
+
+  let ready;
+  const readyPromise = new Promise((resolve) => {
+    ready = resolve;
+  });
+  const instance = new WebAssembly.Instance(mod, {
+    ...go.importObject,
+    workers: {
+      ready: () => {
+        ready();
+      },
+    },
+  });
+  go.run(instance, ctx);
+  await readyPromise;
+}
+
+async function fetch(req, env, ctx) {
+  const binding = {};
+  await run(createRuntimeContext({ env, ctx, binding }));
+  return binding.handleRequest(req);
+}
+
+async function scheduled(event, env, ctx) {
+  const binding = {};
+  await run(createRuntimeContext({ env, ctx, binding }));
+  return binding.runScheduler(event);
+}
+
+async function queue(batch, env, ctx) {
+  const binding = {};
+  await run(createRuntimeContext({ env, ctx, binding }));
+  return binding.handleQueueMessageBatch(batch);
+}
 
 export default {
-  async fetch(request, env, ctx) {
-    return globalThis.workers.fetch(request, env, ctx);
-  }
+  fetch,
+  scheduled,
+  queue,
 };
