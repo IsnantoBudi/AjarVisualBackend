@@ -21,7 +21,7 @@ try {
 // 2. Run wasm-opt
 try {
   console.log('Optimizing Wasm size using wasm-opt...');
-  execSync('npx wasm-opt -Oz --all-features -o main.wasm main.wasm', { stdio: 'inherit' });
+  execSync('npx wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int -o main.wasm main.wasm', { stdio: 'inherit' });
   console.log('Optimization successful.');
 } catch (err) {
   console.error('wasm-opt optimization failed (skipping):', err.message);
