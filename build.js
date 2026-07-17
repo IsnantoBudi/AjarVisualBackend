@@ -5,7 +5,7 @@ console.log('Building Go WebAssembly binary...');
 // Set environment variables for compilation
 const env = {
   ...process.env,
-  GOOS: 'wasip1',
+  GOOS: 'js',
   GOARCH: 'wasm'
 };
 
