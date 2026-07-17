@@ -77,7 +77,7 @@ func GenerateWorksheet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result, err := config.DB.Exec(
-		"INSERT INTO worksheets (judul_materi, tingkat_kelas, data_soal, created_at) VALUES (?, ?, ?, NOW())",
+		"INSERT INTO worksheets (judul_materi, tingkat_kelas, data_soal) VALUES (?, ?, ?)",
 		worksheet.JudulMateri, worksheet.TingkatKelas, dataSoalJSON,
 	)
 	if err != nil {

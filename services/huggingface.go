@@ -165,7 +165,7 @@ func GenerateImage(prompt string) ([]byte, string, error) {
 
 	// 4. Simpan ke database cache untuk request berikutnya
 	_, dbErr := config.DB.Exec(
-		"INSERT INTO cached_images (prompt_hash, prompt, image_data, content_type, created_at) VALUES (?, ?, ?, ?, NOW())",
+		"INSERT INTO cached_images (prompt_hash, prompt, image_data, content_type) VALUES (?, ?, ?, ?)",
 		promptHash, prompt, imgData, ct,
 	)
 	if dbErr != nil {

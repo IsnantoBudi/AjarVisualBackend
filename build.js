@@ -9,13 +9,27 @@ const env = {
   GOARCH: 'wasm'
 };
 
-// 1. Run go build
+// 1. Try to compile with TinyGo, fallback to Go if it fails
+let buildSuccess = false;
+
 try {
-  execSync('go build -trimpath -ldflags="-s -w" -o main.wasm .', { env, stdio: 'inherit' });
-  console.log('Go build successful.');
+  console.log('Attempting to build with TinyGo...');
+  execSync('tinygo build -o main.wasm -target=wasm -no-debug .', { env, stdio: 'inherit' });
+  console.log('TinyGo build successful.');
+  buildSuccess = true;
 } catch (err) {
-  console.error('Go build failed:', err.message);
-  process.exit(1);
+  console.warn('TinyGo build failed or not available, falling back to standard Go build...', err.message);
+}
+
+if (!buildSuccess) {
+  try {
+    console.log('Building with standard Go...');
+    execSync('go build -trimpath -ldflags="-s -w" -o main.wasm .', { env, stdio: 'inherit' });
+    console.log('Go build successful.');
+  } catch (err) {
+    console.error('Go build failed:', err.message);
+    process.exit(1);
+  }
 }
 
 // 2. Run wasm-opt
