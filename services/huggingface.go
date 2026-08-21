@@ -17,19 +17,29 @@ import (
 	"ajarvisual-backend/models"
 )
 
-// HF_MODEL is the model ID.
+// HF_MODEL is the model ID for FLUX
 const HF_MODEL = "black-forest-labs/FLUX.1-schnell"
 
-// QueryHuggingFace calls the HuggingFace Inference API
+// computeDeterministicSeed converts prompt into a stable positive integer seed
+func computeDeterministicSeed(prompt string) int {
+	h := sha256.Sum256([]byte(prompt))
+	seed := int(h[0]) | (int(h[1]) << 8) | (int(h[2]) << 16) | ((int(h[3]) & 0x7f) << 24)
+	if seed < 0 {
+		return -seed
+	}
+	return seed
+}
+
+// QueryHuggingFace calls the HuggingFace Inference API with optimized education clipart prompt
 func QueryHuggingFace(prompt string) ([]byte, string, error) {
 	hfToken := config.Getenv("HF_TOKEN")
 	if hfToken == "" {
 		return nil, "", fmt.Errorf("HF_TOKEN not found in environment")
 	}
 
-	apiURL := fmt.Sprintf("https://router.huggingface.co/hf-inference/models/%s", HF_MODEL)
+	apiURL := fmt.Sprintf("https://api-inference.huggingface.co/models/%s", HF_MODEL)
 
-	refinedPrompt := prompt + ", cartoon style, vibrant colors, white background, educational illustration for kids, cute digital art, high resolution"
+	refinedPrompt := prompt + ", isolated on pure solid white background, flat 2d vector clipart for kids, clean sharp lines, vibrant colors, minimal digital art"
 
 	payload := map[string]interface{}{
 		"inputs": refinedPrompt,
@@ -76,12 +86,20 @@ func QueryHuggingFace(prompt string) ([]byte, string, error) {
 	return imgData, contentType, nil
 }
 
-// QueryPollinationsImage fetches an image from Pollinations.ai
-func QueryPollinationsImage(prompt string) ([]byte, string, error) {
-	encoded := url.QueryEscape(prompt + ", cartoon style, educational, kids illustration, vibrant, cute, white background")
-	apiURL := fmt.Sprintf("https://image.pollinations.ai/prompt/%s?width=100&height=100&nologo=true&seed=%d", encoded, time.Now().UnixMilli()%10000)
+// QueryPollinationsImage fetches an image from Pollinations.ai with deterministic seed and prompt optimization
+func QueryPollinationsImage(prompt string, model string) ([]byte, string, error) {
+	refinedPrompt := prompt + ", isolated on pure solid white background, flat 2d vector clipart for kids, clean sharp lines, vibrant colors, minimal digital art"
+	encoded := url.QueryEscape(refinedPrompt)
+	seed := computeDeterministicSeed(prompt)
 
-	log.Printf("[Pollinations] Sending GET request to: %s", apiURL)
+	modelParam := ""
+	if model == "flux" {
+		modelParam = "&model=flux"
+	}
+
+	apiURL := fmt.Sprintf("https://image.pollinations.ai/prompt/%s?width=512&height=512&nologo=true&seed=%d%s", encoded, seed, modelParam)
+
+	log.Printf("[Pollinations] Sending GET request with seed %d: %s", seed, apiURL[:min(len(apiURL), 90)]+"...")
 	client := &http.Client{Timeout: 25 * time.Second}
 	resp, err := client.Get(apiURL)
 	if err != nil {
@@ -109,12 +127,11 @@ func QueryPollinationsImage(prompt string) ([]byte, string, error) {
 }
 
 var (
-	// imageMutex memastikan generator gambar berjalan secara serial (antrean satu per satu)
-	// untuk menghindari status 429 (Too Many Requests) dari API eksternal.
+	// imageMutex serializes generation requests to avoid 429 Too Many Requests
 	imageMutex sync.Mutex
 )
 
-// GenerateImage checks TiDB cache first, then generates and saves if not found.
+// GenerateImage checks TiDB/D1 cache first, then generates and saves if not found.
 func GenerateImage(prompt string, model string) ([]byte, string, error) {
 	// Normalize model name
 	normalizedModel := "pollinations"
@@ -122,53 +139,53 @@ func GenerateImage(prompt string, model string) ([]byte, string, error) {
 		normalizedModel = "flux"
 	}
 
-	// 1. Hitung SHA-256 hash dari model + prompt
+	// 1. Compute deterministic SHA-256 hash
 	hashBytes := sha256.Sum256([]byte(normalizedModel + ":" + prompt))
 	promptHash := hex.EncodeToString(hashBytes[:])
 
-	// 2. Cari di database cache menggunakan config.DB (CONCURRENT - tanpa Lock)
+	// 2. Check Database Cache (CONCURRENT - lock-free query)
 	var cached models.CachedImage
 	err := config.DB.QueryRow("SELECT prompt_hash, prompt, image_data, content_type, created_at FROM cached_images WHERE prompt_hash = ?", promptHash).
 		Scan(&cached.PromptHash, &cached.Prompt, &cached.ImageData, &cached.ContentType, &cached.CreatedAt)
-	if err == nil {
+	if err == nil && len(cached.ImageData) > 0 {
 		log.Printf("[image cache] HIT for [%s]: %s (hash: %s)", normalizedModel, prompt[:min(len(prompt), 40)], promptHash)
 		return cached.ImageData, cached.ContentType, nil
 	}
 
-	log.Printf("[image cache] MISS for [%s]: %s. Menunggu giliran generator serial...", normalizedModel, prompt[:min(len(prompt), 40)])
+	log.Printf("[image cache] MISS for [%s]: %s. Waiting for generator...", normalizedModel, prompt[:min(len(prompt), 40)])
 
-	// 3. Masuk antrean serial (hanya satu generator yang berjalan pada satu waktu)
+	// 3. Serial execution queue
 	imageMutex.Lock()
 	defer imageMutex.Unlock()
 
-	// 3a. Periksa kembali cache setelah mendapatkan lock (Double-Check Locking Pattern)
+	// Double-Check Locking Pattern
 	err = config.DB.QueryRow("SELECT prompt_hash, prompt, image_data, content_type, created_at FROM cached_images WHERE prompt_hash = ?", promptHash).
 		Scan(&cached.PromptHash, &cached.Prompt, &cached.ImageData, &cached.ContentType, &cached.CreatedAt)
-	if err == nil {
+	if err == nil && len(cached.ImageData) > 0 {
 		log.Printf("[image cache] HIT (double-check) for [%s]: %s (hash: %s)", normalizedModel, prompt[:min(len(prompt), 40)], promptHash)
 		return cached.ImageData, cached.ContentType, nil
 	}
 
-	// Jeda singkat antar pemanggilan API serial agar API luar tidak merasa dibombardir
-	time.Sleep(500 * time.Millisecond)
+	// Small pause between serial external requests
+	time.Sleep(300 * time.Millisecond)
 
 	var imgData []byte
 	var ct string
 
 	if normalizedModel == "flux" {
-		// Prioritaskan HuggingFace FLUX.1-schnell
+		// Try HuggingFace FLUX.1 first, fallback to Pollinations FLUX engine
 		imgData, ct, err = QueryHuggingFace(prompt)
 		if err == nil {
 			log.Printf("[image] HuggingFace FLUX OK for: %s", prompt[:min(len(prompt), 60)])
 		} else {
-			log.Printf("[image] HuggingFace FLUX failed (%v), fallback to Pollinations...", err)
-			imgData, ct, err = QueryPollinationsImage(prompt)
+			log.Printf("[image] HuggingFace FLUX failed (%v), fallback to Pollinations FLUX Engine...", err)
+			imgData, ct, err = QueryPollinationsImage(prompt, "flux")
 		}
 	} else {
-		// Default: Coba Pollinations.ai dulu
-		imgData, ct, err = QueryPollinationsImage(prompt)
+		// Default: Pollinations Turbo
+		imgData, ct, err = QueryPollinationsImage(prompt, "pollinations")
 		if err == nil {
-			log.Printf("[image] Pollinations OK for: %s", prompt[:min(len(prompt), 60)])
+			log.Printf("[image] Pollinations Turbo OK for: %s", prompt[:min(len(prompt), 60)])
 		} else {
 			log.Printf("[image] Pollinations failed (%v), fallback to HuggingFace FLUX...", err)
 			imgData, ct, err = QueryHuggingFace(prompt)
@@ -183,15 +200,15 @@ func GenerateImage(prompt string, model string) ([]byte, string, error) {
 		ct = "image/jpeg"
 	}
 
-	// 4. Simpan ke database cache untuk request berikutnya
+	// 4. Save to database cache for permanent fast retrieval
 	_, dbErr := config.DB.Exec(
 		"INSERT INTO cached_images (prompt_hash, prompt, image_data, content_type) VALUES (?, ?, ?, ?)",
 		promptHash, prompt, imgData, ct,
 	)
 	if dbErr != nil {
-		log.Printf("[image cache] Warning: failed to save cache to database: %v", dbErr)
+		log.Printf("[image cache] Notice: DB cache insert result: %v", dbErr)
 	} else {
-		log.Printf("[image cache] Saved to database for hash: %s", promptHash)
+		log.Printf("[image cache] Successfully cached image for hash: %s (%d bytes)", promptHash, len(imgData))
 	}
 
 	return imgData, ct, nil

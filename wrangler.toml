@@ -12,6 +12,10 @@ binding = "DB"
 database_name = "ajar-visual-db"
 database_id = "e103f496-909b-4e4e-b520-e811257b3dfd"
 
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "ajarvisual"
+
 [observability]
 enabled = false
 head_sampling_rate = 1

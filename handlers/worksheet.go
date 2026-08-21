@@ -1,8 +1,11 @@
 package handlers
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 
@@ -269,6 +272,18 @@ func ProxyImage(w http.ResponseWriter, r *http.Request) {
 		imageModel = r.URL.Query().Get("model")
 	}
 
+	// Generate deterministic ETag from prompt & imageModel
+	hashBytes := sha256.Sum256([]byte(imageModel + ":" + prompt))
+	etag := fmt.Sprintf(`W/"%s"`, hex.EncodeToString(hashBytes[:8]))
+
+	// Check if browser sent matching ETag
+	if match := r.Header.Get("If-None-Match"); match == etag {
+		w.Header().Set("ETag", etag)
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+
 	imageData, contentType, err := services.GenerateImage(prompt, imageModel)
 	if err != nil {
 		http.Error(w, "Gagal ambil gambar: "+err.Error(), http.StatusInternalServerError)
@@ -279,7 +294,8 @@ func ProxyImage(w http.ResponseWriter, r *http.Request) {
 		contentType = "image/jpeg"
 	}
 
-	// Set Cache-Control header (1 year, immutable)
+	// Set immutable Cache-Control and ETag headers
+	w.Header().Set("ETag", etag)
 	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 	w.Header().Set("Content-Type", contentType)
 	w.WriteHeader(http.StatusOK)
