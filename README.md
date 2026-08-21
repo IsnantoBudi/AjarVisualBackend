@@ -1,248 +1,161 @@
-﻿#  AjarVisual Backend API
+# 🚀 AjarVisual Backend API
 
-> REST API untuk platform generator soal otomatis berbasis AI  dibangun dengan Go, Gin, dan TiDB Cloud.
-
-## Tech Stack
-
-| Layer | Teknologi | Keterangan |
-|-------|-----------|------------|
-| Language | **Go 1.22+** | Performa tinggi, concurrency native |
-| Framework | **Gin** | HTTP router paling populer di ekosistem Go |
-| ORM | **GORM** | Abstraksi database dengan auto-migrate |
-| Database | **TiDB Cloud** | Distributed MySQL-compatible cloud DB |
-| AI - Teks | **Gemini 1.5 Flash** | Google GenAI untuk generate soal |
-| AI - Gambar | **Pollinations.ai** | Free image generation, zero API key |
-| Config | **godotenv** | Load .env file |
+> REST API berkinerja tinggi untuk platform generator soal otomatis & Lembar Kerja Peserta Didik (LKPD) berbasis AI interaktif. Dibangun dengan Go 1.22+, mendukung eksekusi native maupun **Serverless WebAssembly di Cloudflare Workers**.
 
 ---
 
-## Struktur Direktori
+## 🛠️ Tech Stack & Integrasi
 
-```
+| Komponen | Teknologi | Keterangan |
+| :--- | :--- | :--- |
+| **Language & Runtime** | **Go 1.22+** / **WebAssembly (Wasm)** | Native Go untuk server/VPS atau Wasm untuk Cloudflare Workers |
+| **HTTP Framework** | **Gin** / Custom Go Handler | Routing REST API berlatensi rendah |
+| **Database** | **Cloudflare D1** & **TiDB Cloud / MySQL** | Penyimpanan riwayat worksheet dan butir soal |
+| **LLM - Teks & Soal** | **Ollama Cloud** (`gemma4`, `minimax-m2.5`) | Generasi butir soal, anagram kata, dan drill hitung |
+| **AI - Ilustrasi Gambar** | **Hugging Face FLUX.1-schnell** & **Pollinations.ai** | Generasi gambar edukatif kartun berlatar putih bersih |
+| **Deployment Engine** | **Cloudflare Workers (Wrangler)** / **Docker** | Serverless Edge Computing global |
+
+---
+
+## 📂 Struktur Direktori
+
+```text
 backend/
- main.go                  # Entry point, Gin server, routes
- .env                     # Environment variables (jangan di-commit!)
- go.mod
- go.sum
- config/
-    db.go                # TiDB Cloud connection + auto-migrate
- models/
-    worksheet.go         # Struct Worksheet & Soal, custom JSON scanner
- services/
-    gemini.go            # Integrasi Gemini 1.5 Flash API
-    pollinations.go      # Generator URL gambar Pollinations.ai
- handlers/
-     worksheet.go         # Handler untuk semua endpoint API
+├── config/             # Manajemen konfigurasi environment & database
+├── handlers/           # Controller handler endpoint REST API
+├── models/             # Data struct Worksheet, Soal, LKPD, dan MathBlock
+├── services/           # Integrasi Ollama Cloud, Hugging Face, & Pollinations
+├── build.js            # Script kompilasi Go ke WebAssembly (main.wasm)
+├── index.js            # Entry point Cloudflare Workers wrapper
+├── main.go             # Entry point native Go HTTP server
+├── wrangler.toml       # Konfigurasi deployment Cloudflare Workers & D1
+└── .env                # Environment variables (JANGAN di-commit)
 ```
 
 ---
 
-## Setup & Instalasi
+## ⚙️ Konfigurasi Environment (`.env`)
 
-### Prerequisites
-- **Go 1.22+**  [download](https://go.dev/dl/)
-- Akun **TiDB Cloud**  [tidbcloud.com](https://tidbcloud.com)
-- **Gemini API Key**  [Google AI Studio](https://aistudio.google.com)
-
-### 1. Clone & masuk ke folder backend
-
-```bash
-cd backend
-```
-
-### 2. Install dependencies
-
-```bash
-go mod tidy
-```
-
-### 3. Buat file `.env`
+Buat berkas `.env` di dalam folder `backend/`:
 
 ```env
-GEMINI_API_KEY=your_gemini_api_key_here
-
+# ── Database (TiDB Cloud / MySQL / Cloudflare D1) ──
 TIDB_HOST=gateway01.ap-southeast-1.prod.aws.tidbcloud.com
 TIDB_PORT=4000
-TIDB_USER=your_tidb_username
+TIDB_USER=your_tidb_user
 TIDB_PASSWORD=your_tidb_password
 TIDB_DATABASE=test
 
+# ── Server & CORS ──
 PORT=8080
-FRONTEND_URL=http://localhost:3000
+FRONTEND_URL=http://localhost:3000,https://ajar-visual.vercel.app,https://isnantobudi.online
+BACKEND_URL=https://ajarvisual.isnantobudi.online
+
+# ── AI API Keys ──
+OLLAMA_CLOUD_API=your_ollama_cloud_api_key
+OLLAMA_MODEL=gemma4
+HF_TOKEN=your_huggingface_token
 ```
 
-### 4. Jalankan server
+---
 
+## 💻 Panduan Menjalankan Secara Lokal (Local Development)
+
+### 1. Prasyarat
+- **Go 1.22+** ([Unduh Go](https://go.dev/dl/))
+- **Node.js 18+** & npm (untuk build Wasm jika diperlukan)
+
+### 2. Jalankan Server Go Lokal
 ```bash
-go run main.go
+cd backend
+go mod tidy
+go run .
 ```
-
-Server berjalan di **http://localhost:8080**
-
----
-
-## API Endpoints
-
-### Base URL: `http://localhost:8080/api`
-
-#### `GET /health`
-Health check  pastikan server berjalan.
-
-**Response:**
-```json
-{
-  "status": "ok",
-  "message": "AjarVisual API is running"
-}
-```
+Server lokal akan aktif di `http://localhost:8080`.
 
 ---
 
-#### `POST /generate`
-Generate worksheet soal baru menggunakan Gemini AI.
+## 🚀 Panduan Deployment
 
-**Request Body:**
-```json
-{
-  "topik": "Penjumlahan Buah",
-  "kelas": 3,
-  "jumlah_soal": 5
-}
-```
+Backend AjarVisual mendukung beberapa opsi deployment sesuai kebutuhan infrastruktur:
 
-| Field | Type | Validasi | Keterangan |
-|-------|------|----------|------------|
-| `topik` | string | required | Topik materi yang ingin dibuat soal |
-| `kelas` | int | 16 | Tingkat kelas SD |
-| `jumlah_soal` | int | 510 | Jumlah soal yang diinginkan |
+### Opsi 1: Cloudflare Workers (Rekomendasi / Production Saat Ini)
+Deploy backend sebagai serverless edge WebAssembly menggunakan Cloudflare Workers dan database Cloudflare D1:
 
-**Response:**
-```json
-{
-  "message": "Worksheet berhasil dibuat!",
-  "worksheet": {
-    "id": 1,
-    "judul_materi": "Penjumlahan Buah",
-    "tingkat_kelas": 3,
-    "data_soal": [
-      {
-        "pertanyaan": "Berapa jumlah apel di bawah ini?",
-        "jawaban_benar": "5",
-        "opsi": ["3", "4", "5", "6"],
-        "image_prompt": "5 red apples on a wooden table, cartoon style for kids",
-        "image_url": "https://image.pollinations.ai/prompt/..."
-      }
-    ],
-    "created_at": "2026-04-06T07:23:48Z"
-  }
-}
-```
+1. **Login ke Cloudflare via CLI**:
+   ```bash
+   npx wrangler login
+   ```
+2. **Deploy ke Cloudflare Workers**:
+   ```bash
+   npx wrangler deploy
+   ```
+   > Script `build.js` akan otomatis mengompilasi kode Go menjadi `main.wasm` dan mengunggahnya ke Cloudflare Workers.
+
+3. **Set Environment Secrets di Cloudflare**:
+   ```bash
+   npx wrangler secret put OLLAMA_CLOUD_API
+   npx wrangler secret put HF_TOKEN
+   ```
+
+4. **Custom Domain**:
+   - Di dashboard Cloudflare Workers, hubungkan custom domain: `https://ajarvisual.isnantobudi.online`
 
 ---
 
-#### `GET /history`
-Ambil semua worksheet yang tersimpan, diurutkan dari terbaru.
+### Opsi 2: VPS / Linux Server (Docker / Systemd)
+Jika ingin mendeploy backend sebagai service mandiri di VPS (Ubuntu, Debian, dll.):
 
-**Response:** `[]Worksheet`
-
----
-
-#### `GET /history/:id`
-Ambil satu worksheet berdasarkan ID.
-
----
-
-#### `DELETE /history/:id`
-Hapus worksheet berdasarkan ID.
-
----
-
-#### `POST /regenerate-image`
-Generate ulang URL gambar untuk soal tertentu.
-
-**Request Body:**
-```json
-{
-  "image_prompt": "5 red apples on wooden table, cartoon style"
-}
-```
-
-**Response:**
-```json
-{
-  "image_url": "https://image.pollinations.ai/prompt/..."
-}
-```
+1. **Build Binary Native Linux**:
+   ```bash
+   GOOS=linux GOARCH=amd64 go build -o ajarvisual-api .
+   ```
+2. **Jalankan via Systemd atau PM2**:
+   ```bash
+   ./ajarvisual-api
+   ```
+3. **Konfigurasi Reverse Proxy Nginx**:
+   ```nginx
+   server {
+       server_name ajarvisual.isnantobudi.online;
+       location / {
+           proxy_pass http://127.0.0.1:8080;
+           proxy_set_header Host $host;
+           proxy_set_header X-Real-IP $remote_addr;
+       }
+   }
+   ```
 
 ---
 
-## Database Schema
+## 📑 Daftar Endpoint REST API
 
-```sql
-CREATE TABLE worksheets (
-    id          INT AUTO_INCREMENT PRIMARY KEY,
-    judul_materi VARCHAR(255) NOT NULL,
-    tingkat_kelas INT DEFAULT 1,
-    data_soal   JSON NOT NULL,
-    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-```
-
-Schema di-generate otomatis saat pertama kali server jalan (`AutoMigrate`).
-
----
-
-## Cara Kerja Integrasi AI
-
-### Gemini 1.5 Flash
-1. Menerima input `topik`, `kelas`, `jumlah_soal` dari request
-2. Membangun prompt yang memaksa Gemini untuk output **JSON murni** (tanpa markdown)
-3. Melakukan parsing & validasi response JSON
-4. Jika parsing gagal, error dikembalikan ke client
-
-### Pollinations.ai
-- **Zero API Key**  cukup format URL dengan prompt yang di-encode
-- Setiap soal mendapat gambar unik berdasarkan `image_prompt`
-- Seed digenerate dari hash prompt untuk konsistensi
-
-```go
-// Contoh URL yang dihasilkan
-https://image.pollinations.ai/prompt/5%20red%20apples%2C%20cartoon%20style?width=512&height=512&nologo=true&seed=12345
-```
+| Method | Endpoint | Keterangan |
+| :--- | :--- | :--- |
+| `GET` | `/api/health` | Health check & verifikasi status server |
+| `POST` | `/api/generate` | Generate lembar kerja LKPD baru dengan AI |
+| `POST` | `/api/worksheets/:id/add-soal` | Menambahkan butir soal ke worksheet yang sudah ada |
+| `GET` | `/api/history` | Mengambil seluruh riwayat lembar kerja |
+| `GET` | `/api/history/:id` | Mengambil 1 lembar kerja spesifik berdasarkan ID |
+| `DELETE` | `/api/history/:id` | Menghapus lembar kerja dari database |
+| `POST` | `/api/regenerate-image` | Membuat ulang URL gambar untuk soal tertentu |
+| `GET` | `/api/image-proxy` | Proxy image generator (Pollinations / Hugging Face FLUX) |
 
 ---
 
-## Tips Development
+## 📝 Format 9 Tipe Lembar Kerja (LKPD) yang Didukung
 
-```bash
-# Build binary untuk production
-go build -o ajarvisual-api main.go
-
-# Cek compile error
-go vet ./...
-
-# Format kode
-gofmt -w .
-
-# Lihat semua dependency
-go list -m all
-```
+1. **Lengkapi Suku Kata** (`lengkapi_suku_kata`) - *Wajib Bergambar*
+2. **Tulis Huruf Depan** (`huruf_depan`) - *Wajib Bergambar*
+3. **Lingkari Kata Sesuai Gambar** (`lingkari_kata`) - *Wajib Bergambar*
+4. **Menyusun Kata / Anagram** (`susun_kata`) - *Wajib Bergambar*
+5. **Drill Matematika (30 Baris Hitung Grid A4)** (`drill_matematika`) - *Tanpa Gambar*
+6. **Pilihan Ganda (A/B/C/D)** (`pilihan_ganda`) - *Gambar Opsional*
+7. **Mencocokkan Garis** (`mencocokkan`) - *Gambar Opsional*
+8. **Benar / Salah** (`benar_salah`) - *Gambar Opsional*
+9. **Isian Singkat** (`isian_singkat`) - *Gambar Opsional*
 
 ---
 
-## Troubleshooting
-
-| Masalah | Solusi |
-|---------|--------|
-| `Failed to connect to TiDB` | Cek kredensial di `.env`, pastikan IP tidak diblokir firewall |
-| `failed to parse Gemini response` | Gemini kadang menambahkan markdown  sudah di-handle dengan `strings.TrimPrefix` |
-| Port conflict | Ganti `PORT=8080` di `.env` |
-| DNS resolution failed | Coba `nslookup gateway01.ap-southeast-1.prod.aws.tidbcloud.com` |
-
----
-
-## Kontributor
-
-**Isnanto Budi**  Backend Engineer
-
-> *"Generated by AjarVisual AI by Isnanto Budi"*
+## 👨‍💻 Kontributor
+- **Isnanto Budi** - Full-Stack Developer
