@@ -21,6 +21,7 @@ type GenerateConfig struct {
 	TipeSoal    string `json:"tipe_soal"`
 	TanpaGambar bool   `json:"tanpa_gambar"`
 	Model       string `json:"model"`
+	ImageModel  string `json:"image_model"`
 }
 
 type ollamaMatchingPair struct {
@@ -33,13 +34,21 @@ type ollamaMatchingPair struct {
 }
 
 type ollamaSoal struct {
-	Pertanyaan   string               `json:"pertanyaan"`
-	JawabanBenar string               `json:"jawaban_benar,omitempty"`
-	Opsi         []string             `json:"opsi,omitempty"`
-	PasanganItem []ollamaMatchingPair `json:"pasangan_item,omitempty"`
-	TipeSoal     string               `json:"tipe_soal"`
-	TanpaGambar  bool                 `json:"tanpa_gambar"`
-	ImagePrompt  string               `json:"image_prompt,omitempty"`
+	Pertanyaan        string               `json:"pertanyaan"`
+	JawabanBenar      string               `json:"jawaban_benar,omitempty"`
+	Opsi              []string             `json:"opsi,omitempty"`
+	PasanganItem      []ollamaMatchingPair `json:"pasangan_item,omitempty"`
+	TipeSoal          string               `json:"tipe_soal"`
+	TanpaGambar       bool                 `json:"tanpa_gambar"`
+	ImagePrompt       string               `json:"image_prompt,omitempty"`
+	SukuKataAwal      string               `json:"suku_kata_awal,omitempty"`
+	PilihanSukuKata   []string             `json:"pilihan_suku_kata,omitempty"`
+	HurufDepan        string               `json:"huruf_depan,omitempty"`
+	SisaKata          string               `json:"sisa_kata,omitempty"`
+	OpsiKata          []string             `json:"opsi_kata,omitempty"`
+	HurufAcak         string               `json:"huruf_acak,omitempty"`
+	JumlahHuruf       int                  `json:"jumlah_huruf,omitempty"`
+	MathBlocks        []models.MathBlock   `json:"math_blocks,omitempty"`
 }
 
 type OllamaRequest struct {
@@ -103,6 +112,70 @@ func GenerateSoal(cfg GenerateConfig) ([]models.Soal, error) {
   }
 ]`
 		}
+	} else if cfg.TipeSoal == "lengkapi_suku_kata" {
+		formatJson = fmt.Sprintf(`[
+  {
+    "pertanyaan": "Lengkapi suku kata di bawah ini dengan tepat!",
+    "suku_kata_awal": "Sa",
+    "pilihan_suku_kata": ["pa", "pi"],
+    "jawaban_benar": "pi",
+    "tipe_soal": "lengkapi_suku_kata",
+    "tanpa_gambar": %t,
+    "image_prompt": "seekor sapi hitam putih kartun lucu untuk anak, simple white background"
+  }
+]`, cfg.TanpaGambar)
+	} else if cfg.TipeSoal == "huruf_depan" {
+		formatJson = fmt.Sprintf(`[
+  {
+    "pertanyaan": "Tulis huruf depan yang hilang pada kotak!",
+    "huruf_depan": "B",
+    "sisa_kata": "ola",
+    "jawaban_benar": "B",
+    "tipe_soal": "huruf_depan",
+    "tanpa_gambar": %t,
+    "image_prompt": "sebuah bola sepak kartun berwarna, simple white background"
+  }
+]`, cfg.TanpaGambar)
+	} else if cfg.TipeSoal == "lingkari_kata" {
+		formatJson = fmt.Sprintf(`[
+  {
+    "pertanyaan": "Lingkari kata sesuai gambar berikut!",
+    "opsi_kata": ["Sapu", "Saku", "Suka"],
+    "jawaban_benar": "Sapu",
+    "tipe_soal": "lingkari_kata",
+    "tanpa_gambar": %t,
+    "image_prompt": "sebuah sapu ijuk kuning bersih kartun untuk anak, simple white background"
+  }
+]`, cfg.TanpaGambar)
+	} else if cfg.TipeSoal == "susun_kata" {
+		formatJson = fmt.Sprintf(`[
+  {
+    "pertanyaan": "Susunlah huruf-huruf ini menjadi kata yang tepat!",
+    "huruf_acak": "L P E A",
+    "jumlah_huruf": 4,
+    "jawaban_benar": "APEL",
+    "tipe_soal": "susun_kata",
+    "tanpa_gambar": %t,
+    "image_prompt": "buah apel merah segar kartun anak, simple white background"
+  }
+]`, cfg.TanpaGambar)
+	} else if cfg.TipeSoal == "drill_matematika" {
+		formatJson = `[
+  {
+    "pertanyaan": "Berhitung Penjumlahan / Pengurangan Cepat",
+    "math_blocks": [
+      {"judul_blok": "Kotak 1", "items": ["1 + 2 =", "2 + 4 =", "4 + 6 =", "7 + 8 =", "9 + 1 ="]},
+      {"judul_blok": "Kotak 2", "items": ["3 + 3 =", "2 + 2 =", "4 + 5 =", "6 + 3 =", "7 + 9 ="]},
+      {"judul_blok": "Kotak 3", "items": ["8 + 4 =", "6 + 2 =", "2 + 3 =", "7 + 1 =", "5 + 6 ="]},
+      {"judul_blok": "Kotak 4", "items": ["5 + 1 =", "8 + 4 =", "4 + 3 =", "7 + 5 =", "6 + 1 ="]},
+      {"judul_blok": "Kotak 5", "items": ["1 + 9 =", "8 + 2 =", "7 + 6 =", "6 + 6 =", "5 + 9 ="]},
+      {"judul_blok": "Kotak 6", "items": ["2 + 9 =", "3 + 4 =", "7 + 4 =", "1 + 3 =", "4 + 1 ="]}
+    ],
+    "tipe_soal": "drill_matematika",
+    "tanpa_gambar": true,
+    "image_prompt": ""
+  }
+]`
 	} else if cfg.TipeSoal == "benar_salah" {
 		formatJson = fmt.Sprintf(`[
   {
@@ -143,18 +216,20 @@ func GenerateSoal(cfg GenerateConfig) ([]models.Soal, error) {
 		instruksiImage = fmt.Sprintf(`- kanan_prompt wajib deskriptif, cocok untuk ilustrasi kartun anak-anak (SD)
 - kiri berisi kata atau teks, kanan_is_image selalu true untuk soal ilustrasi
 - Pastikan pasangan_item berisi tepat %d item`, cfg.JumlahSoal)
-	} else if cfg.TanpaGambar {
+	} else if cfg.TipeSoal == "drill_matematika" || cfg.TanpaGambar {
 		instruksiImage = `- MENGABAIKAN image_prompt (wajib isi string kosong "")`
 	} else {
-		instruksiImage = `- image_prompt harus deskriptif dan cocok untuk kartun anak-anak`
+		instruksiImage = `- image_prompt harus deskriptif dan cocok untuk kartun anak-anak, berlatar belakang putih bersih (white background clipart)`
 	}
 
 	jumlahSoalPrompt := fmt.Sprintf("Buat %d soal berjenis \"%s\"", cfg.JumlahSoal, cfg.TipeSoal)
 	if cfg.TipeSoal == "mencocokkan" {
 		jumlahSoalPrompt = fmt.Sprintf("Buat 1 soal berjenis \"%s\" yang memuat tepat %d pasangan item di dalamnya", cfg.TipeSoal, cfg.JumlahSoal)
+	} else if cfg.TipeSoal == "drill_matematika" {
+		jumlahSoalPrompt = "Buat 1 set drill matematika yang memuat 6 math_blocks (masing-masing 5 soal aritmatika)"
 	}
 
-	prompt := fmt.Sprintf(`Kamu adalah guru ahli untuk anak SD kelas %d di Indonesia.
+	prompt := fmt.Sprintf(`Kamu adalah guru ahli untuk anak TK dan SD kelas %d di Indonesia.
 %s tentang topik: "%s".
 
 PENTING: Balas HANYA dengan JSON array valid. Format response harus berupa JSON array of objects.
@@ -163,13 +238,20 @@ Format setiap soal seperti ini:
 %s
 
 Pastikan:
-- KUNCI JAWABAN (jawaban_benar / pasangan) HARUS 100%% AKURAT, VALID, DAN SESUAI FAKTA NYATA. Dilarang memberikan jawaban yang salah!
-- Pertanyaan sesuai level kelas %d SD
+- KUNCI JAWABAN (jawaban_benar / pasangan / kata) HARUS 100%% AKURAT, VALID, DAN SESUAI FAKTA NYATA. Dilarang memberikan kata/jawaban yang salah!
+- Tingkat kesulitan sesuai level kelas %d SD / TK
+- Bila lengkapi_suku_kata: kata terdiri dari 2 suku kata (CV-CV seperti Sa-pi, Ku-da, Ru-sa, Ba-ju). Pilihan suku kata berisi 2 opsi (1 benar, 1 pengecoh mirip).
+- Bila huruf_depan: objek kata konkret (seperti Bola, Api, Ceri, Durian). huruf_depan huruf ke-1, sisa_kata huruf ke-2 sampai akhir.
+- Bila lingkari_kata: sediakan 3 kata mirip (opsi_kata) yang satu adalah jawaban_benar sesuai gambar.
+- Bila susun_kata: acak huruf kata secara jelas (huruf_acak diberi spasi seperti "L P E A", jawaban_benar huruf kapital "APEL", jumlah_huruf 4).
+- Bila drill_matematika: sediakan tepat 6 blok, tiap blok berisi 5 soal aritmatika tingkat kelas %d.
 - Bila pilihan_ganda atau benar_salah, jawaban_benar HARUS identik persis dengan yang ada di dalam array opsi
 - Bila isian_singkat, buat array opsi MENJADI KOSONG []
 - Bila mencocokkan, pasangan kiri dan kanan harus tepat dan bersesuaian.
 %s
-- Hanya output JSON array, tidak ada teks lain`, cfg.Kelas, jumlahSoalPrompt, cfg.Topik, formatJson, cfg.Kelas, instruksiImage)
+- Hanya output JSON array, tidak ada teks lain`, cfg.Kelas, jumlahSoalPrompt, cfg.Topik, formatJson, cfg.Kelas, cfg.Kelas, instruksiImage)
+
+	log.Printf("[Ollama] Preparing request for model: %s, topic: %s", modelName, cfg.Topik)
 
 	// Call Ollama Cloud API
 	ollamaReq := OllamaRequest{
@@ -181,40 +263,35 @@ Pastikan:
 
 	jsonData, err := json.Marshal(ollamaReq)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal ollama request: %w", err)
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	apiURL := config.Getenv("OLLAMA_CLOUD_URL")
-	if apiURL == "" {
-		apiURL = "https://ollama.com/api/generate"
-	}
-
-	req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(jsonData))
+	httpReq, err := http.NewRequest("POST", "https://ollama.com/api/generate", bytes.NewBuffer(jsonData))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create http request: %w", err)
+		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-	req.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
 
 	client := &http.Client{Timeout: 90 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := client.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("ollama cloud request error: %w", err)
+		return nil, fmt.Errorf("failed to send request to Ollama: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
-		log.Printf("[Ollama] Error %d: %s", resp.StatusCode, string(bodyBytes))
-		return nil, fmt.Errorf("ollama cloud api error: status %d", resp.StatusCode)
+		return nil, fmt.Errorf("ollama API error (status %d): %s", resp.StatusCode, string(bodyBytes))
 	}
 
 	var ollamaResp OllamaResponse
 	if err := json.NewDecoder(resp.Body).Decode(&ollamaResp); err != nil {
-		return nil, fmt.Errorf("failed to decode ollama response: %w", err)
+		return nil, fmt.Errorf("failed to decode Ollama response: %w", err)
 	}
 
+	// Clean raw text
 	rawText := strings.TrimSpace(ollamaResp.Response)
 	rawText = strings.TrimPrefix(rawText, "```json")
 	rawText = strings.TrimPrefix(rawText, "```")
@@ -234,21 +311,33 @@ Pastikan:
 	soalList := make([]models.Soal, 0, len(rawList))
 	for _, raw := range rawList {
 		soal := models.Soal{
-			Pertanyaan:   raw.Pertanyaan,
-			JawabanBenar: raw.JawabanBenar,
-			Opsi:         raw.Opsi,
-			TipeSoal:     raw.TipeSoal,
-			TanpaGambar:  cfg.TanpaGambar,
-			ImagePrompt:  raw.ImagePrompt,
+			Pertanyaan:      raw.Pertanyaan,
+			JawabanBenar:    raw.JawabanBenar,
+			Opsi:            raw.Opsi,
+			TipeSoal:        raw.TipeSoal,
+			TanpaGambar:     cfg.TanpaGambar,
+			ImagePrompt:     raw.ImagePrompt,
+			SukuKataAwal:    raw.SukuKataAwal,
+			PilihanSukuKata: raw.PilihanSukuKata,
+			HurufDepan:      raw.HurufDepan,
+			SisaKata:        raw.SisaKata,
+			OpsiKata:        raw.OpsiKata,
+			HurufAcak:       raw.HurufAcak,
+			JumlahHuruf:     raw.JumlahHuruf,
+			MathBlocks:      raw.MathBlocks,
 		}
 
 		if soal.TipeSoal == "" {
 			soal.TipeSoal = cfg.TipeSoal
 		}
 
-		// Handle non-matching image
-		if !cfg.TanpaGambar && cfg.TipeSoal != "mencocokkan" && raw.ImagePrompt != "" {
-			soal.ImageURL = GenerateImageURL(raw.ImagePrompt)
+		if cfg.TipeSoal == "drill_matematika" {
+			soal.TanpaGambar = true
+		}
+
+		// Handle image generation for types with images
+		if !cfg.TanpaGambar && cfg.TipeSoal != "mencocokkan" && cfg.TipeSoal != "drill_matematika" && raw.ImagePrompt != "" {
+			soal.ImageURL = GenerateImageURL(raw.ImagePrompt, cfg.ImageModel)
 		}
 
 		// Handle matching items
@@ -266,10 +355,10 @@ Pastikan:
 				// Generate image URLs for image-type items
 				if !cfg.TanpaGambar {
 					if p.KiriIsImage && p.KiriPrompt != "" {
-						pair.KiriURL = GenerateImageURL(p.KiriPrompt)
+						pair.KiriURL = GenerateImageURL(p.KiriPrompt, cfg.ImageModel)
 					}
 					if p.KananIsImage && p.KananPrompt != "" {
-						pair.KananURL = GenerateImageURL(p.KananPrompt)
+						pair.KananURL = GenerateImageURL(p.KananPrompt, cfg.ImageModel)
 					}
 				}
 				pairs = append(pairs, pair)

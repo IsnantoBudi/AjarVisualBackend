@@ -1,6 +1,9 @@
 import "./wasm_exec.js";
 import { createRuntimeContext, loadModule } from "./runtime.mjs";
 
+// Bind global fetch to preserve its scope when called from Go WebAssembly
+globalThis.fetch = globalThis.fetch.bind(globalThis);
+
 let mod;
 
 globalThis.tryCatch = (fn) => {

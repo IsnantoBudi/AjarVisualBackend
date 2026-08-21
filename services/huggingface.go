@@ -51,12 +51,15 @@ func QueryHuggingFace(prompt string) ([]byte, string, error) {
 	req.Header.Set("Authorization", "Bearer "+hfToken)
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 60 * time.Second}
+	log.Printf("[HuggingFace] Sending POST request to: %s", apiURL)
+	client := &http.Client{Timeout: 25 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
+		log.Printf("[HuggingFace] Request error: %v", err)
 		return nil, "", fmt.Errorf("huggingface request error: %w", err)
 	}
 	defer resp.Body.Close()
+	log.Printf("[HuggingFace] Response received: status %d", resp.StatusCode)
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
@@ -78,12 +81,15 @@ func QueryPollinationsImage(prompt string) ([]byte, string, error) {
 	encoded := url.QueryEscape(prompt + ", cartoon style, educational, kids illustration, vibrant, cute, white background")
 	apiURL := fmt.Sprintf("https://image.pollinations.ai/prompt/%s?width=100&height=100&nologo=true&seed=%d", encoded, time.Now().UnixMilli()%10000)
 
-	client := &http.Client{Timeout: 60 * time.Second}
+	log.Printf("[Pollinations] Sending GET request to: %s", apiURL)
+	client := &http.Client{Timeout: 25 * time.Second}
 	resp, err := client.Get(apiURL)
 	if err != nil {
+		log.Printf("[Pollinations] Request error: %v", err)
 		return nil, "", fmt.Errorf("pollinations request error: %w", err)
 	}
 	defer resp.Body.Close()
+	log.Printf("[Pollinations] Response received: status %d", resp.StatusCode)
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, "", fmt.Errorf("pollinations error: status %d", resp.StatusCode)
@@ -109,9 +115,15 @@ var (
 )
 
 // GenerateImage checks TiDB cache first, then generates and saves if not found.
-func GenerateImage(prompt string) ([]byte, string, error) {
-	// 1. Hitung SHA-256 hash dari prompt
-	hashBytes := sha256.Sum256([]byte(prompt))
+func GenerateImage(prompt string, model string) ([]byte, string, error) {
+	// Normalize model name
+	normalizedModel := "pollinations"
+	if model == "flux" || model == "flux-schnell" || model == "huggingface" || model == HF_MODEL {
+		normalizedModel = "flux"
+	}
+
+	// 1. Hitung SHA-256 hash dari model + prompt
+	hashBytes := sha256.Sum256([]byte(normalizedModel + ":" + prompt))
 	promptHash := hex.EncodeToString(hashBytes[:])
 
 	// 2. Cari di database cache menggunakan config.DB (CONCURRENT - tanpa Lock)
@@ -119,39 +131,48 @@ func GenerateImage(prompt string) ([]byte, string, error) {
 	err := config.DB.QueryRow("SELECT prompt_hash, prompt, image_data, content_type, created_at FROM cached_images WHERE prompt_hash = ?", promptHash).
 		Scan(&cached.PromptHash, &cached.Prompt, &cached.ImageData, &cached.ContentType, &cached.CreatedAt)
 	if err == nil {
-		log.Printf("[image cache] HIT for: %s (hash: %s)", prompt[:min(len(prompt), 40)], promptHash)
+		log.Printf("[image cache] HIT for [%s]: %s (hash: %s)", normalizedModel, prompt[:min(len(prompt), 40)], promptHash)
 		return cached.ImageData, cached.ContentType, nil
 	}
 
-	log.Printf("[image cache] MISS for: %s. Menunggu giliran generator serial...", prompt[:min(len(prompt), 40)])
+	log.Printf("[image cache] MISS for [%s]: %s. Menunggu giliran generator serial...", normalizedModel, prompt[:min(len(prompt), 40)])
 
 	// 3. Masuk antrean serial (hanya satu generator yang berjalan pada satu waktu)
 	imageMutex.Lock()
 	defer imageMutex.Unlock()
 
 	// 3a. Periksa kembali cache setelah mendapatkan lock (Double-Check Locking Pattern)
-	// Hal ini untuk menghindari duplikasi request jika request identik sedang mengantre.
 	err = config.DB.QueryRow("SELECT prompt_hash, prompt, image_data, content_type, created_at FROM cached_images WHERE prompt_hash = ?", promptHash).
 		Scan(&cached.PromptHash, &cached.Prompt, &cached.ImageData, &cached.ContentType, &cached.CreatedAt)
 	if err == nil {
-		log.Printf("[image cache] HIT (double-check) for: %s (hash: %s)", prompt[:min(len(prompt), 40)], promptHash)
+		log.Printf("[image cache] HIT (double-check) for [%s]: %s (hash: %s)", normalizedModel, prompt[:min(len(prompt), 40)], promptHash)
 		return cached.ImageData, cached.ContentType, nil
 	}
 
-	// Jeda singkat (misal 500ms) antar pemanggilan API serial agar API luar tidak merasa dibombardir
+	// Jeda singkat antar pemanggilan API serial agar API luar tidak merasa dibombardir
 	time.Sleep(500 * time.Millisecond)
 
 	var imgData []byte
 	var ct string
 
-	// Coba Pollinations.ai dulu
-	imgData, ct, err = QueryPollinationsImage(prompt)
-	if err == nil {
-		log.Printf("[image] Pollinations OK for: %s", prompt[:min(len(prompt), 60)])
-	} else {
-		log.Printf("[image] Pollinations failed (%v), trying HuggingFace...", err)
-		// Fallback ke HuggingFace
+	if normalizedModel == "flux" {
+		// Prioritaskan HuggingFace FLUX.1-schnell
 		imgData, ct, err = QueryHuggingFace(prompt)
+		if err == nil {
+			log.Printf("[image] HuggingFace FLUX OK for: %s", prompt[:min(len(prompt), 60)])
+		} else {
+			log.Printf("[image] HuggingFace FLUX failed (%v), fallback to Pollinations...", err)
+			imgData, ct, err = QueryPollinationsImage(prompt)
+		}
+	} else {
+		// Default: Coba Pollinations.ai dulu
+		imgData, ct, err = QueryPollinationsImage(prompt)
+		if err == nil {
+			log.Printf("[image] Pollinations OK for: %s", prompt[:min(len(prompt), 60)])
+		} else {
+			log.Printf("[image] Pollinations failed (%v), fallback to HuggingFace FLUX...", err)
+			imgData, ct, err = QueryHuggingFace(prompt)
+		}
 	}
 
 	if err != nil {
@@ -183,12 +204,15 @@ func min(a, b int) int {
 	return b
 }
 
-// GenerateImageURLFromOs returns the backend proxy URL for the given prompt
-func GenerateImageURLFromOs(prompt string) string {
+// GenerateImageURLFromOs returns the backend proxy URL for the given prompt and model
+func GenerateImageURLFromOs(prompt string, model string) string {
 	backendURL := config.Getenv("BACKEND_URL")
 	if backendURL == "" {
 		backendURL = "http://localhost:8080"
 	}
 	encoded := url.QueryEscape(prompt)
+	if model != "" {
+		return fmt.Sprintf("%s/api/image-proxy?prompt=%s&image_model=%s", backendURL, encoded, url.QueryEscape(model))
+	}
 	return fmt.Sprintf("%s/api/image-proxy?prompt=%s", backendURL, encoded)
 }

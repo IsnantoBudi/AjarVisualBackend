@@ -3,6 +3,7 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
+	"log"
 	"net/http"
 
 	"ajarvisual-backend/config"
@@ -17,6 +18,7 @@ type GenerateRequest struct {
 	TipeSoal    string `json:"tipe_soal"`
 	TanpaGambar bool   `json:"tanpa_gambar"`
 	Model       string `json:"model"`
+	ImageModel  string `json:"image_model"`
 }
 
 func jsonResponse(w http.ResponseWriter, statusCode int, data interface{}) {
@@ -30,11 +32,16 @@ func errorResponse(w http.ResponseWriter, statusCode int, msg string) {
 }
 
 func GenerateWorksheet(w http.ResponseWriter, r *http.Request) {
+	log.Printf("[GenerateWorksheet] Incoming request")
 	var req GenerateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Printf("[GenerateWorksheet] Failed to decode body: %v", err)
 		errorResponse(w, http.StatusBadRequest, err.Error())
 		return
 	}
+
+	log.Printf("[GenerateWorksheet] Topic: %s, Grade: %d, Qty: %d, Type: %s, NoImage: %t, Model: %s, ImageModel: %s", 
+		req.Topik, req.Kelas, req.JumlahSoal, req.TipeSoal, req.TanpaGambar, req.Model, req.ImageModel)
 
 	if req.Topik == "" {
 		errorResponse(w, http.StatusBadRequest, "Topik tidak boleh kosong!")
@@ -56,13 +63,17 @@ func GenerateWorksheet(w http.ResponseWriter, r *http.Request) {
 		TipeSoal:    req.TipeSoal,
 		TanpaGambar: req.TanpaGambar,
 		Model:       req.Model,
+		ImageModel:  req.ImageModel,
 	}
 
+	log.Printf("[GenerateWorksheet] Calling services.GenerateSoal")
 	soalList, err := services.GenerateSoal(cfg)
 	if err != nil {
+		log.Printf("[GenerateWorksheet] GenerateSoal failed: %v", err)
 		errorResponse(w, http.StatusInternalServerError, "Gagal generate soal: "+err.Error())
 		return
 	}
+	log.Printf("[GenerateWorksheet] GenerateSoal returned %d questions successfully", len(soalList))
 
 	worksheet := models.Worksheet{
 		JudulMateri:  req.Topik,
@@ -72,21 +83,25 @@ func GenerateWorksheet(w http.ResponseWriter, r *http.Request) {
 
 	dataSoalJSON, err := json.Marshal(worksheet.DataSoal)
 	if err != nil {
+		log.Printf("[GenerateWorksheet] JSON marshal of questions failed: %v", err)
 		errorResponse(w, http.StatusInternalServerError, "Gagal marshal data soal")
 		return
 	}
 
+	log.Printf("[GenerateWorksheet] Saving worksheet to database (size %d bytes)", len(dataSoalJSON))
 	result, err := config.DB.Exec(
 		"INSERT INTO worksheets (judul_materi, tingkat_kelas, data_soal) VALUES (?, ?, ?)",
 		worksheet.JudulMateri, worksheet.TingkatKelas, dataSoalJSON,
 	)
 	if err != nil {
+		log.Printf("[GenerateWorksheet] Database insertion failed: %v", err)
 		errorResponse(w, http.StatusInternalServerError, "Gagal simpan worksheet: "+err.Error())
 		return
 	}
 
 	lastInsertID, _ := result.LastInsertId()
 	worksheet.ID = uint(lastInsertID)
+	log.Printf("[GenerateWorksheet] Worksheet saved successfully with ID: %d", worksheet.ID)
 
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
 		"message":   "Worksheet berhasil dibuat!",
@@ -115,6 +130,11 @@ func GetAllHistory(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		worksheets = append(worksheets, ws)
+	}
+
+	if err := rows.Err(); err != nil {
+		errorResponse(w, http.StatusInternalServerError, "Gagal iterate riwayat: "+err.Error())
+		return
 	}
 
 	jsonResponse(w, http.StatusOK, worksheets)
@@ -190,6 +210,7 @@ func AddSoalToWorksheet(w http.ResponseWriter, r *http.Request) {
 		TipeSoal:    req.TipeSoal,
 		TanpaGambar: req.TanpaGambar,
 		Model:       req.Model,
+		ImageModel:  req.ImageModel,
 	}
 
 	newSoal, err := services.GenerateSoal(cfg)
@@ -221,6 +242,7 @@ func AddSoalToWorksheet(w http.ResponseWriter, r *http.Request) {
 func RegenerateImage(w http.ResponseWriter, r *http.Request) {
 	type RegenerateReq struct {
 		ImagePrompt string `json:"image_prompt"`
+		ImageModel  string `json:"image_model"`
 	}
 	var req RegenerateReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -231,7 +253,7 @@ func RegenerateImage(w http.ResponseWriter, r *http.Request) {
 		errorResponse(w, http.StatusBadRequest, "image_prompt is required")
 		return
 	}
-	url := services.GenerateImageURL(req.ImagePrompt)
+	url := services.GenerateImageURL(req.ImagePrompt, req.ImageModel)
 	jsonResponse(w, http.StatusOK, map[string]string{"image_url": url})
 }
 
@@ -242,7 +264,12 @@ func ProxyImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	imageData, contentType, err := services.GenerateImage(prompt)
+	imageModel := r.URL.Query().Get("image_model")
+	if imageModel == "" {
+		imageModel = r.URL.Query().Get("model")
+	}
+
+	imageData, contentType, err := services.GenerateImage(prompt, imageModel)
 	if err != nil {
 		http.Error(w, "Gagal ambil gambar: "+err.Error(), http.StatusInternalServerError)
 		return
